@@ -1,4 +1,4 @@
-privacy-tools
-=============
+privacy-tools, A set of privacy tools for metadata
+==================================================
 
-A set of privacy tools
+within_voronoi_transation: Move antennas uniformly within their voronoi cell.
