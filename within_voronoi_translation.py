@@ -2,6 +2,18 @@
 
 """
 within_voronoi_translation.py: Move antennas uniformly within their voronoi cell.
+
+Noise is often added to the GPS coordinates of antennas to hinter's an attacker ability to link outside information to the released database. This code takes as input a list of antennas location and moves them uniformly within their voronoi cell. The noise added is proportional to the density of antennas in the region while preserving the overall structure of the mesh.
+
+Use:
+> import within_voronoi_translation as wvt
+> wvt.generate_new_positions([(0.367, 0.491), (0.415, 0.289), (0.495, 0.851),...])
+
+Test:
+$ python within_voronoi_translation.py
+
+Algorithm:
+A delaunay triangulation is used to compute the neighbors of each centroids. Points are then draw at random in the square bounding the circle who diameter is equal to the distance between the centroid and its farthest neighbors. Points are rejected until they fall into the voronoi cell.
 """
 
 
@@ -10,18 +22,18 @@ import random
 import numpy as np
 
 
-def compute_distance(a, pos, positions):
+def __compute_distance(a, pos, positions):
   x1 = positions[a][0]
   y1 = positions[a][1]
   x2, y2 = pos[0], pos[1]
   return np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
 
-def compute_distance_centroids(a, b, positions):
-  return compute_distance(a, positions[b], positions)
+def __compute_distance_centroids(a, b, positions):
+  return __compute_distance(a, positions[b], positions)
 
 
-def compute_neighbors(positions):
+def __compute_neighbors(positions):
   delaunay = scipy.spatial.Delaunay(positions)
   slices, delaunay_neighbors = delaunay.vertex_neighbor_vertices
   neighbors = []
@@ -30,26 +42,26 @@ def compute_neighbors(positions):
   return neighbors
 
 
-def compute_radiuses(positions, neighbors):
+def __compute_radiuses(positions, neighbors):
   radiuses = []
   for node, pos in enumerate(positions):
-    radiuses.append(max([compute_distance_centroids(node,i,positions) for i in neighbors[node]]))
+    radiuses.append(max([__compute_distance_centroids(node,i,positions) for i in neighbors[node]]))
   return radiuses
 
 
-def draw_point(node, positions, neighbors, radiuses):
+def __draw_point(node, positions, neighbors, radiuses):
   condition = True
   while condition:
     trans_x, trans_y = [(random.random() - .5) * radiuses[node] for i in range(2)]
     proposed_point = (positions[node][0] - trans_x, positions[node][1] - trans_y)
-    condition = compute_distance(node, proposed_point, positions) > min([compute_distance(i, proposed_point, positions) for i in neighbors[node]])
+    condition = __compute_distance(node, proposed_point, positions) > min([__compute_distance(i, proposed_point, positions) for i in neighbors[node]])
   return proposed_point
 
 
 def generate_new_positions(positions):
-  neighbors = compute_neighbors(positions)
-  radiuses = compute_radiuses(positions, neighbors)
-  return [draw_point(i, positions, neighbors, radiuses) for i in range(len(positions))]
+  neighbors = __compute_neighbors(positions)
+  radiuses = __compute_radiuses(positions, neighbors)
+  return [__draw_point(i, positions, neighbors, radiuses) for i in range(len(positions))]
 
 
 if __name__ == '__main__':
