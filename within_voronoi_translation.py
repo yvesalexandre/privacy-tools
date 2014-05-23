@@ -3,7 +3,12 @@
 """
 within_voronoi_translation.py: Move antennas uniformly within their voronoi cell.
 
-Noise is often added to the GPS coordinates of antennas to hinter's an attacker ability to link outside information to the released database. This code takes as input a list of antennas location and moves them uniformly within their voronoi cell. The noise added is proportional to the density of antennas in the region while preserving the overall structure of the mesh.
+Noise is often added to the GPS coordinates of antennas to hinter's an attacker
+ability to link outside information to the released database. This code takes as
+input a list of antennas location and moves them uniformly within their voronoi
+cell. The noise added is proportional to the density of antennas in the region
+while preserving the overall structure of the mesh. To avoid issues, all
+proposed points have to fall within the convex hull formed by the antennas.
 
 Use:
 > import within_voronoi_translation as wvt
@@ -13,7 +18,11 @@ Test:
 $ python within_voronoi_translation.py
 
 Algorithm:
-A delaunay triangulation is used to compute the neighbors of each centroids. Points are then draw at random in the square bounding the circle who diameter is equal to the distance between the centroid and its farthest neighbors. Points are rejected until they fall into the voronoi cell.
+A delaunay triangulation is used to compute the neighbors of each centroids.
+Points are then draw at random in the square bounding the circle who diameter is
+equal to the distance between the centroid and its farthest neighbors.
+Points are rejected until they fall into the voronoi cell and inside the convex
+hull.
 """
 
 
@@ -42,6 +51,34 @@ def __compute_neighbors(positions):
   return neighbors
 
 
+def __outside_convexhull(point, initial_positions):
+  """
+  Return True if the point falls outside of the convex hull.
+  """
+  if set(scipy.spatial.ConvexHull(initial_positions + [point]).vertices) - set(scipy.spatial.ConvexHull(initial_positions).vertices):
+    return True
+  else:
+    return False
+
+
+def __compute_border_points(positions):
+  """
+  Return the set of points for which at least one of their voronoi vertice falls
+  outside of the convex hull.
+  """
+  voronoi = scipy.spatial.Voronoi(positions)
+  vertices_outside = set([-1])
+  for i, vertice in enumerate(voronoi.vertices):
+    if __outside_convexhull(vertice, initial_positions):
+      vertices_outside.add(i)
+
+  points_outside = set()
+  for region_id, region in enumerate(voronoi.regions):
+    if any(point in vertices_outside for point in region):
+      points_outside.add(list(voronoi.point_region).index(region_id))
+  return points_outside
+
+
 def __compute_radiuses(positions, neighbors):
   radiuses = []
   for node, pos in enumerate(positions):
@@ -55,6 +92,7 @@ def __draw_point(node, positions, neighbors, radiuses):
     trans_x, trans_y = [(random.random() - .5) * radiuses[node] for i in range(2)]
     proposed_point = (positions[node][0] - trans_x, positions[node][1] - trans_y)
     condition = __compute_distance(node, proposed_point, positions) > min([__compute_distance(i, proposed_point, positions) for i in neighbors[node]])
+    condition = condition + __outside_convexhull(proposed_point, positions)
   return proposed_point
 
 
@@ -73,8 +111,15 @@ if __name__ == '__main__':
   for i, pos in enumerate(initial_positions):
     plt.text(pos[0], pos[1], str(i))
   for i, pos in enumerate(new_positions):
-    plt.text(pos[0], pos[1], str(i), color='r')
+    initial_pos = initial_positions[i]
+    plt.plot([initial_pos[0], pos[0]], [initial_pos[1], pos[1]], 'k-')
     plt.plot(pos[0], pos[1], marker='o', color='r', ls='')
+  for point in __compute_border_points(initial_positions):
+    initial_pos = initial_positions[point]
+    plt.plot(initial_pos[0], initial_pos[1], marker='o', color='g', ls='')
+  hull = scipy.spatial.ConvexHull(initial_positions)
+  for simplex in hull.simplices:
+    list_x, list_y = zip(*[initial_positions[simplex[0]], initial_positions[simplex[1]]])
+    plt.plot(list_x, list_y, 'b-')
   plt.show()
-
 
