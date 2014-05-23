@@ -51,6 +51,14 @@ def __compute_neighbors(positions):
   return neighbors
 
 
+def __compute_max_vertices(positions):
+  voronoi = scipy.spatial.Voronoi(positions)
+  neighboring_vertices = []
+  for point, region in enumerate(voronoi.point_region):
+    neighboring_vertices.append(max([__compute_distance(point, voronoi.vertices[pos], positions) for pos in voronoi.regions[region]]))
+  return neighboring_vertices
+
+
 def __outside_convexhull(point, initial_positions):
   """
   Return True if the point falls outside of the convex hull.
@@ -98,7 +106,7 @@ def __draw_point(node, positions, neighbors, radiuses):
 
 def generate_new_positions(positions):
   neighbors = __compute_neighbors(positions)
-  radiuses = __compute_radiuses(positions, neighbors)
+  radiuses = [max(i) for i in zip(__compute_max_vertices(initial_positions), __compute_radiuses(positions, neighbors))]
   return [__draw_point(i, positions, neighbors, radiuses) for i in range(len(positions))]
 
 
