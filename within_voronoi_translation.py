@@ -6,9 +6,9 @@ within_voronoi_translation.py: Move antennas uniformly within their voronoi cell
 Noise is often added to the GPS coordinates of antennas to hinter's an attacker
 ability to link outside information to the released database. This code takes as
 input a list of antennas location and moves them uniformly within their voronoi
-cell. The noise added is proportional to the density of antennas in the region
-while preserving the overall structure of the mesh. To avoid issues, all
-proposed points have to fall within the convex hull formed by the antennas.
+cell and the convex hull formed by the antennas. The noise added is proportional
+to the density of antennas in the region while preserving the overall structure
+of the mesh.
 
 Use:
 > import within_voronoi_translation as wvt
@@ -18,10 +18,10 @@ Test:
 $ python within_voronoi_translation.py
 
 Algorithm:
-A delaunay triangulation is used to compute the neighbors of each centroids.
-Points are then draw at random in the square bounding the circle who diameter is
-equal to the distance between the centroid and its farthest neighbors.
-Points are rejected until they fall into the voronoi cell and inside the convex
+Points are then draw at random in the square bounding the circle whose diameter
+is equal to the maximum of the distance between the centroid its voronoi vertices
+or the maximum distance with its neighbors for border points.
+Points are rejected until they fall in the voronoi cell and inside the convex
 hull.
 """
 
@@ -32,6 +32,9 @@ import numpy as np
 
 
 def __compute_distance(a, pos, positions):
+  """
+  Return the distance between an antenna a and a point pos (tuple)
+  """
   x1 = positions[a][0]
   y1 = positions[a][1]
   x2, y2 = pos[0], pos[1]
@@ -39,34 +42,10 @@ def __compute_distance(a, pos, positions):
 
 
 def __compute_distance_centroids(a, b, positions):
+  """
+  Return the distance between two antennas a and b
+  """
   return __compute_distance(a, positions[b], positions)
-
-
-def __compute_neighbors(positions):
-  delaunay = scipy.spatial.Delaunay(positions)
-  slices, delaunay_neighbors = delaunay.vertex_neighbor_vertices
-  neighbors = []
-  for node, pos in enumerate(positions):
-    neighbors.append(list(delaunay_neighbors[slices[node]:slices[node + 1]]))
-  return neighbors
-
-
-def __compute_max_vertices(positions):
-  voronoi = scipy.spatial.Voronoi(positions)
-  neighboring_vertices = []
-  for point, region in enumerate(voronoi.point_region):
-    neighboring_vertices.append(max([__compute_distance(point, voronoi.vertices[pos], positions) for pos in voronoi.regions[region]]))
-  return neighboring_vertices
-
-
-def __outside_convexhull(point, initial_positions):
-  """
-  Return True if the point falls outside of the convex hull.
-  """
-  if set(scipy.spatial.ConvexHull(initial_positions + [point]).vertices) - set(scipy.spatial.ConvexHull(initial_positions).vertices):
-    return True
-  else:
-    return False
 
 
 def __compute_border_points(positions):
@@ -87,14 +66,49 @@ def __compute_border_points(positions):
   return points_outside
 
 
-def __compute_radiuses(positions, neighbors):
+def __compute_max_radius(positions, neighbors):
+  """
+  Return a list of the maximum distances between an antenna and its voronoi
+  vertices.
+  Note: the maximum distance to its neighbors for border points
+  """
+  voronoi = scipy.spatial.Voronoi(positions)
+  border_points = __compute_border_points(positions)
   radiuses = []
-  for node, pos in enumerate(positions):
-    radiuses.append(max([__compute_distance_centroids(node,i,positions) for i in neighbors[node]]))
+  for point, region in enumerate(voronoi.point_region):
+    if point not in border_points:
+      radiuses.append(max([__compute_distance(point, voronoi.vertices[pos], positions) for pos in voronoi.regions[region]]))
+    else:
+      radiuses.append(max([__compute_distance_centroids(point,i,positions) for i in neighbors[point]]))
   return radiuses
 
 
+def __compute_neighbors(positions):
+  """
+  Return a list of the neighbors of every antenna.
+  """
+  delaunay = scipy.spatial.Delaunay(positions)
+  slices, delaunay_neighbors = delaunay.vertex_neighbor_vertices
+  neighbors = []
+  for node, pos in enumerate(positions):
+    neighbors.append(list(delaunay_neighbors[slices[node]:slices[node + 1]]))
+  return neighbors
+
+
+def __outside_convexhull(point, initial_positions):
+  """
+  Return True if the point falls outside of the convex hull.
+  """
+  if set(scipy.spatial.ConvexHull(initial_positions + [point]).vertices) - set(scipy.spatial.ConvexHull(initial_positions).vertices):
+    return True
+  else:
+    return False
+
+
 def __draw_point(node, positions, neighbors, radiuses):
+  """
+  Return the new position of the antenna.
+  """
   condition = True
   while condition:
     trans_x, trans_y = [(random.random() - .5) * radiuses[node] for i in range(2)]
@@ -105,23 +119,25 @@ def __draw_point(node, positions, neighbors, radiuses):
 
 
 def generate_new_positions(positions):
+  """
+  Return the new position for all the antennas.
+  """
   neighbors = __compute_neighbors(positions)
-  radiuses = [max(i) for i in zip(__compute_max_vertices(initial_positions), __compute_radiuses(positions, neighbors))]
-  return [__draw_point(i, positions, neighbors, radiuses) for i in range(len(positions))]
+  radiuses = __compute_max_radius(positions, neighbors)
+  output = []
+  for point_id in range(len(positions)):
+    output.append(__draw_point(point_id, positions, neighbors, radiuses))
+  return output
 
 
 if __name__ == '__main__':
   import matplotlib.pyplot as plt
-  initial_positions = [(random.random(), random.random()) for i in range(50)]
+  initial_positions = [(random.random(), random.random()) for i in range(100)]
   new_positions = generate_new_positions(initial_positions)
   fig = plt.figure(figsize=(10,9))
   scipy.spatial.voronoi_plot_2d(scipy.spatial.Voronoi(initial_positions), plt.gca())
   for i, pos in enumerate(initial_positions):
     plt.text(pos[0], pos[1], str(i))
-  for i, pos in enumerate(new_positions):
-    initial_pos = initial_positions[i]
-    plt.plot([initial_pos[0], pos[0]], [initial_pos[1], pos[1]], 'k-')
-    plt.plot(pos[0], pos[1], marker='o', color='r', ls='')
   for point in __compute_border_points(initial_positions):
     initial_pos = initial_positions[point]
     plt.plot(initial_pos[0], initial_pos[1], marker='o', color='g', ls='')
@@ -129,5 +145,8 @@ if __name__ == '__main__':
   for simplex in hull.simplices:
     list_x, list_y = zip(*[initial_positions[simplex[0]], initial_positions[simplex[1]]])
     plt.plot(list_x, list_y, 'b-')
+  for i, pos in enumerate(new_positions):
+    initial_pos = initial_positions[i]
+    plt.plot([initial_pos[0], pos[0]], [initial_pos[1], pos[1]], 'k-')
+    plt.plot(pos[0], pos[1], marker='o', color='r', ls='')
   plt.show()
-
