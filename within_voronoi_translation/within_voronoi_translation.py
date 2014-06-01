@@ -6,9 +6,9 @@ within_voronoi_translation.py: Move antennas uniformly within their voronoi cell
 Noise is often added to the GPS coordinates of antennas to hinter's an attacker
 ability to link outside information to the released database. This code takes as
 input a list of antennas location and moves them uniformly within their voronoi
-cell and the convex hull formed by the antennas. The noise added is proportional
-to the density of antennas in the region while preserving the overall structure
-of the mesh.
+cell and either the convex hull formed by the antennas or the polygon. The noise
+added is proportional to the density of antennas in the region while preserving
+the overall structure of the mesh.
 
 Use:
 > import within_voronoi_translation as wvt
@@ -16,13 +16,18 @@ Use:
 
 Test:
 $ python within_voronoi_translation.py
+or
+$ python within_voronoi_translation.py senegal
 
 Algorithm:
 Points are then draw at random in the square bounding the circle whose diameter
 is equal to the maximum of the distance between the centroid its voronoi vertices
-or the maximum distance with its neighbors for border points.
-Points are rejected until they fall in the voronoi cell and inside the convex
-hull.
+or the half-min distance with its neighbors for border points.
+Points are rejected until they fall in the voronoi cell and either inside the
+convex hull or the polygon.
+
+Author: Yves-Alexandre de Montjoye
+https://github.com/yvesalexandre/privacy-tools
 """
 
 
@@ -56,7 +61,7 @@ def __compute_border_points(positions):
   voronoi = scipy.spatial.Voronoi(positions)
   vertices_outside = set([-1])
   for i, vertice in enumerate(voronoi.vertices):
-    if __outside_convexhull(vertice, initial_positions):
+    if not __in_convexhull(vertice, initial_positions):
       vertices_outside.add(i)
 
   points_outside = set()
@@ -70,7 +75,8 @@ def __compute_max_radius(positions, neighbors):
   """
   Return a list of the maximum distances between an antenna and its voronoi
   vertices.
-  Note: the maximum distance to its neighbors for border points
+
+  Note: the half-min distance to its neighbors for border points
   """
   voronoi = scipy.spatial.Voronoi(positions)
   border_points = __compute_border_points(positions)
@@ -79,7 +85,7 @@ def __compute_max_radius(positions, neighbors):
     if point not in border_points:
       radiuses.append(max([__compute_distance(point, voronoi.vertices[pos], positions) for pos in voronoi.regions[region]]))
     else:
-      radiuses.append(max([__compute_distance_centroids(point,i,positions) for i in neighbors[point]]))
+      radiuses.append(min([__compute_distance_centroids(point,i,positions) for i in neighbors[point]]) / 2)
   return radiuses
 
 
@@ -95,17 +101,17 @@ def __compute_neighbors(positions):
   return neighbors
 
 
-def __outside_convexhull(point, initial_positions):
+def __in_convexhull(point, initial_positions):
   """
-  Return True if the point falls outside of the convex hull.
+  Return True if the point is inside the convex hull.
   """
   if set(scipy.spatial.ConvexHull(initial_positions + [point]).vertices) - set(scipy.spatial.ConvexHull(initial_positions).vertices):
-    return True
-  else:
     return False
+  else:
+    return True
 
 
-def __draw_point(node, positions, neighbors, radiuses):
+def __draw_point(node, positions, neighbors, radiuses, polygon):
   """
   Return the new position of the antenna.
   """
@@ -113,27 +119,95 @@ def __draw_point(node, positions, neighbors, radiuses):
   while condition:
     trans_x, trans_y = [(random.random() - .5) * radiuses[node] for i in range(2)]
     proposed_point = (positions[node][0] - trans_x, positions[node][1] - trans_y)
-    condition = __compute_distance(node, proposed_point, positions) > min([__compute_distance(i, proposed_point, positions) for i in neighbors[node]])
-    condition = condition + __outside_convexhull(proposed_point, positions)
+    in_voronoi = __compute_distance(node, proposed_point, positions) < min([__compute_distance(i, proposed_point, positions) for i in neighbors[node]])
+    if in_voronoi:
+      if polygon:
+        if __in_polygon(proposed_point, polygon):
+          return proposed_point
+      else:
+        if __in_convexhull(proposed_point, positions):
+          return proposed_point
   return proposed_point
 
 
-def generate_new_positions(positions):
+def generate_new_positions(positions, polygon=None):
   """
   Return the new position for all the antennas.
+
+  Shapefile:
+  polygon expects a lonlat polygon. Shapefiles can loaded in python using
+  shapefile and can be converted to lonlat format using pyproj.transform and
+  the appropriate projection (http://www.prj2epsg.org/search).
   """
   neighbors = __compute_neighbors(positions)
   radiuses = __compute_max_radius(positions, neighbors)
   output = []
   for point_id in range(len(positions)):
-    output.append(__draw_point(point_id, positions, neighbors, radiuses))
+    output.append(__draw_point(point_id, positions, neighbors, radiuses, polygon))
   return output
 
 
+def __in_polygon(point,poly):
+  """
+  Return whether a point is in a polygon.
+
+  Ray-casting Algorithm
+  Adapted from http://geospatialpython.com/2011/08/point-in-polygon-2-on-line.html
+  """
+  x, y = point
+  # check if point is a vertex
+  if (x,y) in poly:
+    return True
+  # check if point is on a boundary
+  for i in range(len(poly)):
+    p1 = None
+    p2 = None
+    if i == 0:
+      p1 = poly[0]
+      p2 = poly[1]
+    else:
+      p1 = poly[i - 1]
+      p2 = poly[i]
+    if p1[1] == p2[1] and p1[1] == y and x > min(p1[0], p2[0]) and x < max(p1[0], p2[0]):
+      return True
+  n = len(poly)
+  inside = False
+  p1x,p1y = poly[0]
+  for i in range(n + 1):
+    p2x,p2y = poly[i % n]
+    if y > min(p1y,p2y):
+      if y <= max(p1y,p2y):
+        if x <= max(p1x,p2x):
+          if p1y != p2y:
+            xints = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+          if p1x == p2x or x <= xints:
+            inside = not inside
+    p1x,p1y = p2x,p2y
+  return inside
+
 if __name__ == '__main__':
+  import sys
   import matplotlib.pyplot as plt
-  initial_positions = [(random.random(), random.random()) for i in range(100)]
-  new_positions = generate_new_positions(initial_positions)
+  if (len(sys.argv) > 1) and (sys.argv[1] == 'senegal'):
+    main_type = False
+  else:
+    main_type = True
+  if main_type:
+    initial_positions = [(random.random(), random.random()) for i in range(350)]
+    new_positions = generate_new_positions(initial_positions)
+  else:
+    import pyproj
+    import shapefile
+    sf = shapefile.Reader('senegal_shapefile/senegal.shp')
+    region = sf.shapes()[0]
+    polygon = [pyproj.transform(pyproj.Proj(init='epsg:32628'),pyproj.Proj(proj='latlong'), pts[0], pts[1]) for pts in region.points]
+    initial_positions = []
+    while len(initial_positions) < 350:
+      point = [random.uniform(-18, -11), random.uniform(12,17)]
+      if __in_polygon(point,polygon):
+        initial_positions.append(point)
+    new_positions = generate_new_positions(initial_positions, polygon)
+
   fig = plt.figure(figsize=(10,9))
   scipy.spatial.voronoi_plot_2d(scipy.spatial.Voronoi(initial_positions), plt.gca())
   for i, pos in enumerate(initial_positions):
@@ -141,9 +215,13 @@ if __name__ == '__main__':
   for point in __compute_border_points(initial_positions):
     initial_pos = initial_positions[point]
     plt.plot(initial_pos[0], initial_pos[1], marker='o', color='g', ls='')
-  hull = scipy.spatial.ConvexHull(initial_positions)
-  for simplex in hull.simplices:
-    list_x, list_y = zip(*[initial_positions[simplex[0]], initial_positions[simplex[1]]])
+  if main_type:
+    hull = scipy.spatial.ConvexHull(initial_positions)
+    for simplex in hull.simplices:
+      x, y = zip(*[initial_positions[simplex[0]], initial_positions[simplex[1]]])
+      plt.plot(x, y, 'b-')
+  else:
+    list_x, list_y = zip(*polygon)
     plt.plot(list_x, list_y, 'b-')
   for i, pos in enumerate(new_positions):
     initial_pos = initial_positions[i]
